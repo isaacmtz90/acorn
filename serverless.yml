@@ -1,0 +1,95 @@
+service: acorn-slack-bot
+
+frameworkVersion: "3"
+
+plugins:
+  - serverless-dotenv-plugin
+  - serverless-plugin-typescript
+  - serverless-offline
+
+provider:
+  name: aws
+  runtime: nodejs18.x
+  region: ${opt:region, 'us-east-1'}
+  stage: ${opt:stage, 'dev'}
+  memorySize: 512
+  timeout: 30
+  vpc:
+    securityGroupIds:
+      - ${ssm:/lambda-security-group}
+      - ${ssm:/lambda-outbound-security-group}
+    subnetIds:
+      - ${ssm:/lambda-subnet-1}
+      - ${ssm:/lambda-subnet-2}
+
+  environment:
+    NODE_ENV: ${self:provider.stage}
+    # Slack configuration from SSM
+    SLACK_BOT_TOKEN: ${ssm:/acorn_${self:provider.stage}_slack_token}
+    SLACK_SIGNING_SECRET: ${ssm:/acorn_${self:provider.stage}_slack_secret}
+    SLACK_APP_TOKEN: ${ssm:/acorn_${self:provider.stage}_app_token}
+
+    # Bedrock configuration from SSM
+    BEDROCK_MODEL_ID: ${ssm:/acorn_${self:provider.stage}_bedrock_model}
+    BEDROCK_AGENT_ID: ${ssm:/acorn_${self:provider.stage}_bedrock_agent}
+    BEDROCK_AGENT_ALIAS_ID: ${ssm:/acorn_${self:provider.stage}_bedrock_alias}
+    BEDROCK_ENABLE_TRACE: ${ssm:/acorn_${self:provider.stage}_bedrock_trace}
+    BEDROCK_KNOWLEDGE_BASE_IDS: ${ssm:/acorn_${self:provider.stage}_bedrock_kb}
+
+  iam:
+    role:
+      statements:
+        - Effect: Allow
+          Action:
+            - SSM:GetParameter
+            - SSM:GetParameters
+            - KMS:Decrypt
+            - SQS:SendMessage
+            - SecretsManager:GetSecretValue
+            - bedrock:InvokeModel
+            - bedrock:InvokeModelWithResponseStream
+            - bedrock:InvokeAgent
+            - bedrock:Retrieve
+            - bedrock:RetrieveAndGenerate
+          Resource: "*"
+  deploymentBucket:
+    name: ${ssm:serverless-deployment-bucket}
+    versioning: true
+    blockPublicAccess: true
+custom:
+  serverless-offline:
+    httpPort: 3000
+  dotenv:
+    path: .env.${self:provider.stage}.deploy
+    fallback: .env.${self:provider.stage}
+    exclude:
+      - AWS_REGION
+      - AWS_ACCESS_KEY_ID
+      - AWS_SECRET_ACCESS_KEY
+      - AWS_PROFILE
+
+functions:
+  # Health check endpoint
+  health:
+    handler: src/handlers/healthHandler.handler
+    events:
+      - httpApi:
+          path: /health
+          method: get
+
+  # Slack bot communication endpoint
+  slackBot:
+    handler: src/handlers/slackEventsHandler.handler
+    events:
+      - httpApi:
+          path: /slack/events
+          method: post
+
+package:
+  patterns:
+    - "!src/**/*.test.ts"
+    - "!src/**/*.spec.ts"
+    - "!tests/**"
+    - "!dist/**"
+    - "!.build/**"
+    - "!node_modules/.cache/**"

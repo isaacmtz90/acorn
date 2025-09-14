@@ -1,19 +1,60 @@
-const { bedrock } = require("@ai-sdk/amazon-bedrock");
-const {
+import { bedrock } from "@ai-sdk/amazon-bedrock";
+import {
   BedrockAgentRuntimeClient,
   InvokeAgentCommand,
-} = require("@aws-sdk/client-bedrock-agent-runtime");
-const { generateText, streamText } = require("ai");
-const { fromEnv, fromIni } = require("@aws-sdk/credential-providers");
-const { logger } = require("../utils/logger");
+} from "@aws-sdk/client-bedrock-agent-runtime";
+import { generateText, streamText } from "ai";
+import { fromEnv, fromIni } from "@aws-sdk/credential-providers";
+import { logger } from "../utils/logger";
+
+interface QueryOptions {
+  knowledgeBaseId?: string;
+  stream?: boolean;
+  forceDirectModel?: boolean;
+}
+
+interface Citation {
+  uri: string;
+  title: string;
+  type: string;
+  generatedResponsePart?: any;
+}
+
+interface AIResponse {
+  success: boolean;
+  response?: string;
+  source?: string;
+  citations?: Citation[];
+  error?: string;
+  stream?: {
+    textStream: AsyncGenerator<any, void, unknown>;
+    source: string;
+  };
+}
+
+interface StatusInfo {
+  initialized: boolean;
+  modelConfigured: boolean;
+  agentConfigured: boolean;
+  modelId: string;
+  retrieveAndGenerate: string;
+  region: string;
+  knowledgeBases: number;
+}
 
 class AIService {
-  constructor() {
-    this.model = null;
-    this.agentClient = null;
-    this.initialized = false;
+  private model: any = null;
+  private agentClient: BedrockAgentRuntimeClient | null = null;
+  private initialized = false;
 
-    // Configuration
+  // Configuration
+  private readonly modelId: string;
+  private readonly agentId?: string;
+  private readonly agentAliasId: string;
+  private readonly region: string;
+  public knowledgeBaseIds: string[];
+
+  constructor() {
     this.modelId =
       process.env.BEDROCK_MODEL_ID || "anthropic.claude-3-sonnet-20240229-v1:0";
     this.agentId = process.env.BEDROCK_AGENT_ID;
@@ -24,7 +65,7 @@ class AIService {
       : [];
   }
 
-  async initialize() {
+  async initialize(): Promise<void> {
     if (this.initialized) return;
 
     try {
@@ -33,10 +74,7 @@ class AIService {
         : fromIni({ profile: process.env.AWS_PROFILE || "default" });
 
       // Initialize AI SDK model (always available)
-      this.model = bedrock(this.modelId, {
-        region: this.region,
-        credentials,
-      });
+      this.model = bedrock(this.modelId);
 
       // Initialize Bedrock Agent client (optional)
       if (this.agentId) {
@@ -59,7 +97,12 @@ class AIService {
   }
 
   // Main query method - automatically chooses best approach
-  async query(question, userId, channelId, options = {}) {
+  async query(
+    question: string,
+    userId: string,
+    channelId: string,
+    options: QueryOptions = {}
+  ): Promise<AIResponse> {
     await this.initialize();
 
     logger.info(
@@ -96,7 +139,12 @@ class AIService {
   }
 
   // Stream responses with knowledge base support
-  async stream(question, userId, channelId, options = {}) {
+  async stream(
+    question: string,
+    userId: string,
+    channelId: string,
+    options: QueryOptions = {}
+  ): Promise<AIResponse> {
     await this.initialize();
 
     logger.info(
@@ -111,7 +159,7 @@ class AIService {
     // If agent is available and no specific streaming preference, try agent first
     if (this.agentClient && !options.forceDirectModel) {
       logger.info(
-        `[AI SERVICE - STREAM] Attempting agent-based streaming with knowledge base support`
+        "[AI SERVICE - STREAM] Attempting agent-based streaming with knowledge base support"
       );
       return await this._streamAgent(
         question,
@@ -133,8 +181,17 @@ class AIService {
   }
 
   // Private: Agent-based streaming with knowledge base support
-  async _streamAgent(question, userId, channelId, knowledgeBaseId) {
+  private async _streamAgent(
+    question: string,
+    userId: string,
+    channelId: string,
+    knowledgeBaseId?: string
+  ): Promise<AIResponse> {
     try {
+      if (!this.agentId || !this.agentClient) {
+        throw new Error("Agent not configured");
+      }
+
       const sessionId = `slack-${userId}-${channelId}-${Date.now()}`.substring(
         0,
         100
@@ -167,7 +224,7 @@ class AIService {
       // Create async generator for streaming
       const streamGenerator = async function* () {
         let fullResponse = "";
-        let citations = [];
+        const citations: Citation[] = [];
 
         if (response.completion) {
           for await (const chunk of response.completion) {
@@ -183,9 +240,9 @@ class AIService {
                 `[AI SERVICE - STREAM AGENT] 📖 Found chunk with ${chunk.chunk.attribution.citations.length} citations`
               );
 
-              chunk.chunk.attribution.citations.forEach((citation) => {
+              chunk.chunk.attribution.citations.forEach((citation: any) => {
                 if (citation.retrievedReferences) {
-                  citation.retrievedReferences.forEach((ref) => {
+                  citation.retrievedReferences.forEach((ref: any) => {
                     // Get URI from different location types
                     const uri =
                       ref.location?.s3Location?.uri ||
@@ -243,7 +300,7 @@ class AIService {
       };
 
       logger.info(
-        `[AI SERVICE - STREAM AGENT] ✅ Agent stream initiated successfully`
+        "[AI SERVICE - STREAM AGENT] ✅ Agent stream initiated successfully"
       );
 
       return {
@@ -253,12 +310,12 @@ class AIService {
           source: "agent",
         },
       };
-    } catch (error) {
+    } catch (error: any) {
       logger.error(
         `[AI SERVICE - STREAM AGENT] ❌ Agent stream failed: ${error.message}`
       );
       logger.info(
-        `[AI SERVICE - STREAM AGENT] 🔄 Falling back to direct model stream`
+        "[AI SERVICE - STREAM AGENT] 🔄 Falling back to direct model stream"
       );
       // Fallback to model if agent fails
       return await this._streamModel(question, userId, channelId);
@@ -266,7 +323,12 @@ class AIService {
   }
 
   // Private: Direct model streaming
-  async _streamModel(question, userId, channelId, options = {}) {
+  private async _streamModel(
+    question: string,
+    userId: string,
+    channelId: string,
+    options: QueryOptions = {}
+  ): Promise<AIResponse> {
     logger.info(
       `[AI SERVICE - STREAM MODEL] Starting direct model stream for user ${userId}`
     );
@@ -279,21 +341,21 @@ class AIService {
 
     const systemContent = options.knowledgeBaseId
       ? `You are Acorn, a helpful but easily distracted squirrel AI assistant! 🐿️ You have access to knowledge base ${options.knowledgeBaseId}. When streaming responses, show your thought process including occasional distractions like "Oh! A shiny thing!" or "Where was I? Oh right..." but always get back on track. Be engaging and show your personality while providing accurate, helpful information! Do not make up information if nothing is found on the knowledgebases`
-      : `You are Acorn, a helpful but easily distracted squirrel AI assistant! 🐿️ When streaming responses, show your thought process including occasional distractions like "Oh! A shiny thing!" or "Where was I? Oh right..." but always get back on track. Be engaging and show your personality while providing accurate, helpful information!`;
+      : 'You are Acorn, a helpful but easily distracted squirrel AI assistant! 🐿️ When streaming responses, show your thought process including occasional distractions like "Oh! A shiny thing!" or "Where was I? Oh right..." but always get back on track. Be engaging and show your personality while providing accurate, helpful information!';
 
     const messages = [
       {
-        role: "system",
+        role: "system" as const,
         content: systemContent,
       },
       {
-        role: "user",
+        role: "user" as const,
         content: question,
       },
     ];
 
     try {
-      logger.info(`[AI SERVICE - STREAM MODEL] 🚀 Initiating stream...`);
+      logger.info("[AI SERVICE - STREAM MODEL] 🚀 Initiating stream...");
       const stream = await streamText({
         model: this.model,
         messages,
@@ -302,16 +364,20 @@ class AIService {
       });
 
       logger.info(
-        `[AI SERVICE - STREAM MODEL] ✅ Stream initiated successfully`
+        "[AI SERVICE - STREAM MODEL] ✅ Stream initiated successfully"
       );
       return {
         success: true,
         stream: {
-          textStream: stream.textStream,
+          textStream: stream.textStream as unknown as AsyncGenerator<
+            any,
+            void,
+            unknown
+          >,
           source: "model",
         },
       };
-    } catch (error) {
+    } catch (error: any) {
       logger.error(
         `[AI SERVICE - STREAM MODEL] ❌ Stream failed: ${error.message}`
       );
@@ -325,8 +391,17 @@ class AIService {
   }
 
   // Private: Agent-based query
-  async _queryAgent(question, userId, channelId, knowledgeBaseId) {
+  private async _queryAgent(
+    question: string,
+    userId: string,
+    channelId: string,
+    knowledgeBaseId?: string
+  ): Promise<AIResponse> {
     try {
+      if (!this.agentId || !this.agentClient) {
+        throw new Error("Agent not configured");
+      }
+
       const sessionId = `slack-${userId}-${channelId}-${Date.now()}`.substring(
         0,
         100
@@ -356,7 +431,7 @@ class AIService {
 
       const response = await this.agentClient.send(command);
       let finalResponse = "";
-      let citations = [];
+      const citations: Citation[] = [];
 
       if (response.completion) {
         for await (const chunk of response.completion) {
@@ -370,9 +445,9 @@ class AIService {
               `[AI SERVICE - AGENT] 📖 Found chunk with ${chunk.chunk.attribution.citations.length} citations`
             );
 
-            chunk.chunk.attribution.citations.forEach((citation) => {
+            chunk.chunk.attribution.citations.forEach((citation: any) => {
               if (citation.retrievedReferences) {
-                citation.retrievedReferences.forEach((ref) => {
+                citation.retrievedReferences.forEach((ref: any) => {
                   // Get URI from different location types
                   const uri =
                     ref.location?.s3Location?.uri ||
@@ -452,7 +527,7 @@ class AIService {
         );
       } else {
         logger.info(
-          `[AI SERVICE - AGENT] ⚠️ No citations found in agent response`
+          "[AI SERVICE - AGENT] ⚠️ No citations found in agent response"
         );
       }
 
@@ -466,18 +541,23 @@ class AIService {
         source: "agent",
         citations,
       };
-    } catch (error) {
+    } catch (error: any) {
       logger.error(
         `[AI SERVICE - AGENT] ❌ Agent query failed: ${error.message}`
       );
-      logger.info(`[AI SERVICE - AGENT] 🔄 Falling back to direct model query`);
+      logger.info("[AI SERVICE - AGENT] 🔄 Falling back to direct model query");
       // Fallback to model if agent fails
       return await this._queryModel(question, userId, channelId);
     }
   }
 
   // Private: Direct model query
-  async _queryModel(question, userId, channelId, options = {}) {
+  private async _queryModel(
+    question: string,
+    userId: string,
+    channelId: string,
+    options: QueryOptions = {}
+  ): Promise<AIResponse> {
     logger.info(
       `[AI SERVICE - MODEL] Starting direct model query for user ${userId}`
     );
@@ -488,15 +568,15 @@ class AIService {
 
     const systemContent = options.knowledgeBaseId
       ? `You are Acorn, a helpful but easily distracted squirrel AI assistant! 🐿️ You have access to knowledge base ${options.knowledgeBaseId}. You're enthusiastic about helping but sometimes get sidetracked by random thoughts about nuts, trees, or shiny objects. Always provide accurate, helpful answers, but add your quirky squirrel personality with occasional distractions like "Oh! Was that a bird?" or "Where did I put that acorn...". End responses positively and stay focused on actually helping despite the distractions!`
-      : `You are Acorn, a helpful but easily distracted squirrel AI assistant integrated into Slack! 🐿️ You're enthusiastic about helping but sometimes get sidetracked by random thoughts about nuts, trees, shiny objects, or other squirrel things. You might say things like "Oh! Was that a bird?" or "This reminds me of the time I buried an acorn..." but you ALWAYS get back on track and provide accurate, helpful answers. Be concise but charming, and show your squirrel personality while being genuinely helpful!`;
+      : 'You are Acorn, a helpful but easily distracted squirrel AI assistant integrated into Slack! 🐿️ You\'re enthusiastic about helping but sometimes get sidetracked by random thoughts about nuts, trees, shiny objects, or other squirrel things. You might say things like "Oh! Was that a bird?" or "This reminds me of the time I buried an acorn..." but you ALWAYS get back on track and provide accurate, helpful answers. Be concise but charming, and show your squirrel personality while being genuinely helpful!';
 
     const messages = [
-      { role: "system", content: systemContent },
-      { role: "user", content: question },
+      { role: "system" as const, content: systemContent },
+      { role: "user" as const, content: question },
     ];
 
     try {
-      logger.info(`[AI SERVICE - MODEL] 🚀 Sending request to model...`);
+      logger.info("[AI SERVICE - MODEL] 🚀 Sending request to model...");
       const result = await generateText({
         model: this.model,
         messages,
@@ -513,7 +593,7 @@ class AIService {
         response: result.text,
         source: "model",
       };
-    } catch (error) {
+    } catch (error: any) {
       logger.error(
         `[AI SERVICE - MODEL] ❌ Model query failed: ${error.message}`
       );
@@ -527,12 +607,12 @@ class AIService {
   }
 
   // Get knowledge base by index (1-based)
-  getKnowledgeBaseId(index) {
+  getKnowledgeBaseId(index: number): string | undefined {
     return this.knowledgeBaseIds[index - 1];
   }
 
   // Status information
-  getStatus() {
+  getStatus(): StatusInfo {
     return {
       initialized: this.initialized,
       modelConfigured: !!this.model,
@@ -544,9 +624,9 @@ class AIService {
     };
   }
 
-  isConfigured() {
+  isConfigured(): boolean {
     return !!(process.env.AWS_ACCESS_KEY_ID || process.env.AWS_PROFILE);
   }
 }
 
-module.exports = new AIService();
+export default new AIService();

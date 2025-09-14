@@ -12,7 +12,6 @@ yarn-error.log*
 .env.production.local
 .env.dev
 .env.prod
-.env.staging
 
 # Serverless
 .serverless/

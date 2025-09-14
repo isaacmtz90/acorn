@@ -184,10 +184,10 @@ Deploy to production stage:
 npm run deploy:prod
 ```
 
-Deploy with custom stage:
+Deploy to production:
 
 ```bash
-npx serverless deploy --stage staging
+npx serverless deploy --stage prod
 ```
 
 #### 6. Update Slack App URLs

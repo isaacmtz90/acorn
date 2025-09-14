@@ -3,7 +3,6 @@ import * as dotenv from "dotenv";
 
 import { registerMessageHandlers } from "./handlers/messageHandler";
 import { registerEventHandlers } from "./handlers/eventHandler";
-import { registerAiHandlers } from "./handlers/aiHandler";
 import { registerMentionHandlers } from "./handlers/mentionHandler";
 
 dotenv.config();
@@ -18,17 +17,8 @@ const app = new App({
 
 registerMessageHandlers(app);
 registerEventHandlers(app);
-registerAiHandlers(app);
 registerMentionHandlers(app);
 
-// Debug: Log all events (remove this after debugging)
-app.event(/.+/, async ({ event }) => {
-  console.log("📨 EVENT RECEIVED:", event.type, {
-    user: (event as any).user,
-    channel: (event as any).channel,
-    text: (event as any).text?.substring(0, 50),
-  });
-});
 
 app.error(async (error) => {
   console.error("Bot error:", error);

@@ -32,9 +32,9 @@ const emptyMentionResponse: string = `*chittering excitedly* Oh! Oh! <USER>! �
 
 *tail twitching* Here's what I can help with:
 • Just mention me with any question - I'll stream the answer!
-• \`ask: your question\` - I'll find the answer! Eventually!
-• \`ask kb1: question\` - I'll search my special nut storage!
-• \`/acorn-ask question\` - Ooh, fancy slash commands!
+• Ask me anything and I'll automatically check my knowledge base!
+• \`status\` - Check if I'm working properly!
+• \`info\` - See my brain configuration!
 • Or just mention me - I love getting mentioned! 🥜`;
 
 const helpResponse: string = `*stops mid-leap between branches* Oh! <USER> wants to know what I can do! 🐿️
@@ -43,8 +43,7 @@ const helpResponse: string = `*stops mid-leap between branches* Oh! <USER> wants
 
 🌰 **I can help with questions!** (Got distracted by a bird... where was I?)
 • Mention me with anything - I'll stream the answer live!
-• \`ask: question\` - for when you want answers (also streams!)
-• \`ask kb1: question\` - I know where the good nuts... I mean knowledge is stored!
+• I automatically check my knowledge base for the best answers!
 • \`status\` - check if I'm working (spoiler: probably!)
 • \`info\` - my brain configuration details
 
@@ -76,9 +75,8 @@ const infoResponse = (aiStatus: AIStatus, kbList: string): string => `*adjusts t
 ${kbList}
 
 *How to Talk to Me:* *(I love all of these!)*
-• \`ask: your question\` - Just ask me anything!
-• \`ask kb1: question\` - I'll check my special nut storage!
 • \`@acorn your question\` - Mention me! I'll stream the answer live!
+• I automatically check my knowledge base for the best answers!
 
 *chittering excitedly* That's everything! Any questions? 🌳`;
 
@@ -114,24 +112,29 @@ const getInfoResponse = (userId: string, aiStatus: AIStatus, kbList: string): st
   return infoResponse(aiStatus, kbList).replace("<USER>", `<@${userId}>`);
 };
 
-// AI Handler responses
-const askEmptyResponse: string = "*tilts head* You said \"ask:\" but then... *looks around confused* ...where's the question? Try: `ask: What's the best way to store acorns?` 🐿️";
 
-const askThinkingResponse: string = "*scurries up thinking tree* 🌳 Let me check my nut collection first, then think...";
+// Message Handler responses
+const helloResponse = (userId: string): string =>
+  `*pokes head up from behind an acorn* Hello <@${userId}>! 🐿️🌰`;
 
-const kbNotFoundResponse = (kbIndex: number, totalKbs: number): string =>
-  `*rummages through acorn collection* ❌ Hmm, I don't have knowledge nut #${kbIndex} in my collection! I only have ${totalKbs} special nuts stored away! 🥜`;
+const messageHelpResponse: string = `*chittering helpfully* 🐿️ Here's what this squirrel can do!
 
-const kbEmptyQuestionResponse = (kbIndex: number): string =>
-  "*chittering excitedly* You want to search my special nut collection but... what should I look for? Try: `ask kb1: Where are the best acorn recipes?` 🐿️";
+🌰 *Just Chat With Me!*
+• \`hello\` - I'll wave my tiny paw!
+• \`help\` - This helpful list!
+• \`status\` - Check if I'm still alive!
+• \`info\` - My technical specs!
 
-const kbThinkingResponse = (kbIndex: number): string =>
-  `*diving into knowledge nut collection #${kbIndex}* 🥜 Let me dig through my special storage...`;
+🥜 *Or Just Mention Me!*
+• \`@acorn your question\` - I love attention!
+• \`@acorn status\` - How am I doing?
+• Just mention me with any question - I'll automatically check my knowledge base!
 
-const askSuccessPrefix = (knowledgeBaseUsed: boolean): string =>
-  knowledgeBaseUsed
-    ? "*chittering proudly while holding acorn* Found it in my special nut storage! 🥜 "
-    : "*scratches head thoughtfully* Hmm, not in my acorn collection, but I figured it out anyway! 🐿️ ";
+*tail wagging* No fancy commands needed - just talk to me naturally! 🌳`;
+
+// Event Handler responses
+const memberJoinedResponse = (userId: string): string =>
+  `*chittering excitedly while gathering welcome acorns* Welcome to our tree, <@${userId}>! 🐿️🌰 I was just organizing my nut collection when I saw you arrive! Make yourself at home! 🎉`;
 
 export {
   getRandomGreeting,
@@ -142,13 +145,12 @@ export {
   getStatusResponse,
   getInfoResponse,
 
-  // AI Handler responses
-  askEmptyResponse,
-  askThinkingResponse,
-  kbNotFoundResponse,
-  kbEmptyQuestionResponse,
-  kbThinkingResponse,
-  askSuccessPrefix,
+  // Message Handler responses
+  helloResponse,
+  messageHelpResponse,
+
+  // Event Handler responses
+  memberJoinedResponse,
 };
 
 export type { AIStatus };

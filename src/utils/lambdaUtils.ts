@@ -29,7 +29,9 @@ export function createResponse(
 export function handleCorsPrelight(
   event: APIGatewayProxyEvent
 ): APIGatewayProxyResult | null {
-  if (event.httpMethod === "OPTIONS") {
+  const method =
+    event.httpMethod || (event.requestContext as any)?.http?.method;
+  if (method === "OPTIONS") {
     return createResponse(200, "OK");
   }
   return null;
@@ -65,7 +67,9 @@ export function parseRequestBody(body: string, contentType?: string): any {
     // Default to JSON parsing
     return JSON.parse(body);
   } catch (error) {
-    throw new Error(`Failed to parse request body: ${error}`);
+    const errorMessage =
+      error instanceof Error ? error.message : JSON.stringify(error);
+    throw new Error(`Failed to parse request body: ${errorMessage}`);
   }
 }
 
@@ -120,8 +124,9 @@ export function handleUrlVerification(body: any): APIGatewayProxyResult | null {
  */
 export function getRequestInfo(event: APIGatewayProxyEvent) {
   return {
-    method: event.httpMethod,
-    path: event.path,
+    method:
+      event.httpMethod || (event.requestContext as any)?.http?.method || "POST",
+    path: event.path || event.requestContext?.resourcePath,
     userAgent: event.headers?.["User-Agent"] || event.headers?.["user-agent"],
     sourceIp: event.requestContext?.identity?.sourceIp,
     requestId: event.requestContext?.requestId,

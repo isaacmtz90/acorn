@@ -2,6 +2,11 @@ service: acorn-slack-bot
 
 frameworkVersion: "3"
 
+plugins:
+  - serverless-dotenv-plugin
+  - serverless-plugin-typescript
+  - serverless-offline
+
 provider:
   name: aws
   runtime: nodejs18.x
@@ -9,258 +14,48 @@ provider:
   stage: ${opt:stage, 'dev'}
   memorySize: 512
   timeout: 30
-  architecture: x86_64
 
-  # Environment-based configuration
   environment:
     NODE_ENV: ${self:provider.stage}
-
-    # Slack Configuration
-    SLACK_BOT_TOKEN: ${env:SLACK_BOT_TOKEN}
-    SLACK_SIGNING_SECRET: ${env:SLACK_SIGNING_SECRET}
-    SLACK_APP_TOKEN: ${env:SLACK_APP_TOKEN}
-
-    # AWS Configuration
-    AWS_REGION: ${self:provider.region}
-
-    # AI/Bedrock Configuration
+    SLACK_BOT_TOKEN: ${env:SLACK_BOT_TOKEN, ''}
+    SLACK_SIGNING_SECRET: ${env:SLACK_SIGNING_SECRET, ''}
+    SLACK_APP_TOKEN: ${env:SLACK_APP_TOKEN, ''}
     BEDROCK_MODEL_ID: ${env:BEDROCK_MODEL_ID, 'anthropic.claude-3-sonnet-20240229-v1:0'}
-    BEDROCK_AGENT_ID: ${env:BEDROCK_AGENT_ID, ''}
-    BEDROCK_KNOWLEDGE_BASE_IDS: ${env:BEDROCK_KNOWLEDGE_BASE_IDS, ''}
 
-    # Service Configuration
-    SERVICE_NAME: ${self:service}
-    STAGE: ${self:provider.stage}
-
-  # IAM Role with least privilege permissions
   iam:
     role:
       statements:
-        # Bedrock permissions for AI functionality
         - Effect: Allow
           Action:
             - bedrock:InvokeModel
             - bedrock:InvokeModelWithResponseStream
-          Resource:
-            - "arn:aws:bedrock:${self:provider.region}::foundation-model/*"
-
-        # Bedrock Agent and Knowledge Base permissions
-        - Effect: Allow
-          Action:
-            - bedrock:InvokeAgent
-            - bedrock:Retrieve
-          Resource:
-            - "arn:aws:bedrock:${self:provider.region}:*:agent/*"
-            - "arn:aws:bedrock:${self:provider.region}:*:knowledge-base/*"
-
-        # CloudWatch Logs permissions
-        - Effect: Allow
-          Action:
-            - logs:CreateLogGroup
-            - logs:CreateLogStream
-            - logs:PutLogEvents
-          Resource:
-            - "arn:aws:logs:${self:provider.region}:*:log-group:/aws/lambda/${self:service}-${self:provider.stage}-*"
-
-  # HTTP API Configuration
-  httpApi:
-    cors: true
-    name: ${self:service}-${self:provider.stage}-api
-
-plugins:
-  - serverless-plugin-typescript
-  - serverless-offline
-  - serverless-dotenv-plugin
+          Resource: "arn:aws:bedrock:${self:provider.region}::foundation-model/*"
 
 custom:
-  # Serverless Offline Configuration
   serverless-offline:
     httpPort: 3000
-    host: 0.0.0.0
-    useChildProcesses: true
-
-  # Environment Variables Configuration
   dotenv:
     path: .env.${self:provider.stage}
     fallback: .env
-    include:
-      - SLACK_BOT_TOKEN
-      - SLACK_SIGNING_SECRET
-      - SLACK_APP_TOKEN
-      - BEDROCK_MODEL_ID
-      - BEDROCK_AGENT_ID
-      - BEDROCK_KNOWLEDGE_BASE_IDS
 
 functions:
-  # Main Slack Events API endpoint - handles all chat interactions
-  slackEvents:
-    handler: src/handlers/slackEventsHandler.handler
-    description: "Handles Slack events and message processing"
-    timeout: 30
-    memorySize: 512
-    events:
-      - httpApi:
-          path: /slack/events
-          method: post
-    environment:
-      FUNCTION_NAME: slack-events
-
-    # Function-specific configuration
-    reservedConcurrency: 10
-
-  # Health check endpoint for monitoring
+  # Health check endpoint
   health:
     handler: src/handlers/healthHandler.handler
-    description: "Health check endpoint for API monitoring"
-    timeout: 5
-    memorySize: 128
     events:
       - httpApi:
           path: /health
           method: get
-    environment:
-      FUNCTION_NAME: health
 
-# Package configuration - optimized for deployment
+  # Slack bot communication endpoint
+  slackBot:
+    handler: src/handlers/slackEventsHandler.handler
+    events:
+      - httpApi:
+          path: /slack/events
+          method: post
+
 package:
   patterns:
-    # Exclude development files
-    - "!.env*"
-    - "!.git/**"
-    - "!.github/**"
-    - "!.vscode/**"
-    - "!tests/**"
-    - "!coverage/**"
-    - "!*.md"
-    - "!.eslintrc*"
-    - "!.prettierrc*"
-    - "!jest.config*"
-    - "!nodemon.json"
-    - "!docker*"
-    - "!.dockerignore"
-    - "!Dockerfile*"
     - "!src/**"
-    - "!tsconfig.json"
-    - "!.nvmrc"
-
-    # Include only necessary files
     - "dist/**"
-    - "package.json"
-    - "package-lock.json"
-  individually: false
-
-resources:
-  # CloudFormation Resources
-  Resources:
-    # CloudWatch Log Groups with proper retention policies
-    SlackEventsLogGroup:
-      Type: AWS::Logs::LogGroup
-      Properties:
-        LogGroupName: /aws/lambda/${self:service}-${self:provider.stage}-slackEvents
-        RetentionInDays: 14
-        Tags:
-          - Key: Service
-            Value: ${self:service}
-          - Key: Stage
-            Value: ${self:provider.stage}
-          - Key: Function
-            Value: slackEvents
-
-    HealthLogGroup:
-      Type: AWS::Logs::LogGroup
-      Properties:
-        LogGroupName: /aws/lambda/${self:service}-${self:provider.stage}-health
-        RetentionInDays: 7
-        Tags:
-          - Key: Service
-            Value: ${self:service}
-          - Key: Stage
-            Value: ${self:provider.stage}
-          - Key: Function
-            Value: health
-
-    # API Gateway Custom Domain (optional, for production)
-    # ApiGatewayDomainName:
-    #   Type: AWS::ApiGatewayV2::DomainName
-    #   Condition: CreateCustomDomain
-    #   Properties:
-    #     DomainName: ${self:custom.customDomain.${self:provider.stage}, ''}
-    #     DomainNameConfigurations:
-    #       - EndpointType: REGIONAL
-    #         SecurityPolicy: TLS_1_2
-    #         CertificateArn: ${self:custom.certificateArn.${self:provider.stage}, ''}
-
-  # CloudFormation Outputs for external references
-  Outputs:
-    # API Gateway Information
-    ApiGatewayRestApiId:
-      Description: "HTTP API Gateway ID"
-      Value:
-        Ref: HttpApi
-      Export:
-        Name: ${self:service}-${self:provider.stage}-ApiId
-
-    ApiGatewayRestApiRootResourceId:
-      Description: "HTTP API Gateway Root Resource ID"
-      Value:
-        Fn::GetAtt: [HttpApi, RootResourceId]
-      Export:
-        Name: ${self:service}-${self:provider.stage}-RootResourceId
-
-    ApiEndpoint:
-      Description: "HTTP API Gateway endpoint URL"
-      Value:
-        Fn::Join:
-          - ""
-          - - "https://"
-            - Ref: HttpApi
-            - ".execute-api."
-            - ${self:provider.region}
-            - ".amazonaws.com"
-      Export:
-        Name: ${self:service}-${self:provider.stage}-ApiEndpoint
-
-    SlackEventsUrl:
-      Description: "Slack Events API URL for webhook configuration"
-      Value:
-        Fn::Join:
-          - ""
-          - - "https://"
-            - Ref: HttpApi
-            - ".execute-api."
-            - ${self:provider.region}
-            - ".amazonaws.com/slack/events"
-      Export:
-        Name: ${self:service}-${self:provider.stage}-SlackEventsUrl
-
-    HealthCheckUrl:
-      Description: "Health check endpoint URL"
-      Value:
-        Fn::Join:
-          - ""
-          - - "https://"
-            - Ref: HttpApi
-            - ".execute-api."
-            - ${self:provider.region}
-            - ".amazonaws.com/health"
-      Export:
-        Name: ${self:service}-${self:provider.stage}-HealthCheckUrl
-
-    # Service Information
-    ServiceName:
-      Description: "Service name"
-      Value: ${self:service}
-      Export:
-        Name: ${self:service}-${self:provider.stage}-ServiceName
-
-    Stage:
-      Description: "Deployment stage"
-      Value: ${self:provider.stage}
-      Export:
-        Name: ${self:service}-${self:provider.stage}-Stage
-
-    Region:
-      Description: "AWS Region"
-      Value: ${self:provider.region}
-      Export:
-        Name: ${self:service}-${self:provider.stage}-Region

@@ -1,25 +1,42 @@
-import { APIGatewayProxyEvent, APIGatewayProxyResult } from "aws-lambda";
+import { APIGatewayProxyEvent, APIGatewayProxyResult, Context } from "aws-lambda";
 import crypto from "crypto";
 
 /**
- * Create a standardized HTTP response
+ * Create a standardized HTTP response with enhanced Lambda context
  */
 export function createResponse(
   statusCode: number,
   body: any,
-  additionalHeaders: Record<string, string> = {}
+  additionalHeaders: Record<string, string> = {},
+  context?: Context
 ): APIGatewayProxyResult {
+  const responseBody = typeof body === "string" ? body : JSON.stringify(body);
+
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Headers":
+      "Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token",
+    "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+    ...additionalHeaders,
+  };
+
+  // Add Lambda context headers for debugging
+  if (context) {
+    headers["X-Request-ID"] = context.awsRequestId;
+    headers["X-Function-Name"] = context.functionName;
+    headers["X-Function-Version"] = context.functionVersion;
+
+    const remainingTime = context.getRemainingTimeInMillis?.();
+    if (remainingTime !== undefined) {
+      headers["X-Remaining-Time"] = remainingTime.toString();
+    }
+  }
+
   return {
     statusCode,
-    headers: {
-      "Content-Type": "application/json",
-      "Access-Control-Allow-Origin": "*",
-      "Access-Control-Allow-Headers":
-        "Content-Type,X-Amz-Date,Authorization,X-Api-Key,X-Amz-Security-Token",
-      "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-      ...additionalHeaders,
-    },
-    body: typeof body === "string" ? body : JSON.stringify(body),
+    headers,
+    body: responseBody,
   };
 }
 
@@ -120,6 +137,29 @@ export function handleUrlVerification(body: any): APIGatewayProxyResult | null {
 }
 
 /**
+ * Check if this is a Slack retry event and handle accordingly
+ * Slack retries events if not acknowledged within 3 seconds
+ */
+export function handleSlackRetry(event: APIGatewayProxyEvent): APIGatewayProxyResult | null {
+  // Check for Slack retry headers (case-insensitive)
+  const retryNum = event.headers?.["X-Slack-Retry-Num"] ||
+                   event.headers?.["x-slack-retry-num"];
+
+  const retryReason = event.headers?.["X-Slack-Retry-Reason"] ||
+                      event.headers?.["x-slack-retry-reason"];
+
+  if (retryNum) {
+    // This is a retry event - return 200 immediately to stop retries
+    return createResponse(200, {
+      ok: true,
+      message: `Retry event #${retryNum} acknowledged${retryReason ? ` (reason: ${retryReason})` : ''}`
+    });
+  }
+
+  return null;
+}
+
+/**
  * Extract request information for logging
  */
 export function getRequestInfo(event: APIGatewayProxyEvent) {
@@ -130,5 +170,65 @@ export function getRequestInfo(event: APIGatewayProxyEvent) {
     userAgent: event.headers?.["User-Agent"] || event.headers?.["user-agent"],
     sourceIp: event.requestContext?.identity?.sourceIp,
     requestId: event.requestContext?.requestId,
+    // Include Slack-specific headers for debugging
+    slackRetryNum: event.headers?.["X-Slack-Retry-Num"] || event.headers?.["x-slack-retry-num"],
+    slackRetryReason: event.headers?.["X-Slack-Retry-Reason"] || event.headers?.["x-slack-retry-reason"],
+    slackSignature: event.headers?.["X-Slack-Signature"] || event.headers?.["x-slack-signature"] ? "present" : "missing",
+    slackTimestamp: event.headers?.["X-Slack-Request-Timestamp"] || event.headers?.["x-slack-request-timestamp"],
+  };
+}
+
+/**
+ * Check if Lambda is approaching timeout
+ */
+export function isApproachingTimeout(context: Context, bufferMs: number = 5000): boolean {
+  const remainingTime = context.getRemainingTimeInMillis?.() ?? 30000;
+  return remainingTime <= bufferMs;
+}
+
+/**
+ * Create error response with Lambda context
+ */
+export function createErrorResponse(
+  error: Error,
+  context: Context,
+  statusCode: number = 500
+): APIGatewayProxyResult {
+  return createResponse(
+    statusCode,
+    {
+      error: error.message,
+      type: error.constructor.name,
+      requestId: context.awsRequestId,
+      timestamp: new Date().toISOString(),
+    },
+    {},
+    context
+  );
+}
+
+/**
+ * Validate Lambda environment variables
+ */
+export function validateEnvironment(requiredVars: string[]): { valid: boolean; missing: string[] } {
+  const missing = requiredVars.filter(varName => !process.env[varName]);
+  return {
+    valid: missing.length === 0,
+    missing
+  };
+}
+
+/**
+ * Create timeout-aware fetch with Lambda context
+ */
+export function createTimeoutAwareFetch(context: Context, bufferMs: number = 5000) {
+  return (url: string, options: RequestInit = {}) => {
+    const remainingTime = context.getRemainingTimeInMillis?.() ?? 30000;
+    const timeoutMs = Math.min(remainingTime - bufferMs, 15000);
+
+    return fetch(url, {
+      ...options,
+      signal: AbortSignal.timeout(Math.max(timeoutMs, 1000))
+    });
   };
 }

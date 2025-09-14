@@ -11,6 +11,11 @@ import {
   parseRequestBody,
   getRequestInfo,
   handleCorsPrelight,
+  handleSlackRetry,
+  isApproachingTimeout,
+  createErrorResponse,
+  validateEnvironment,
+  createTimeoutAwareFetch,
 } from "../utils/lambdaUtils";
 import {
   createSlackApp,
@@ -19,6 +24,8 @@ import {
 
 // Initialize Slack app once (outside handler for reuse across invocations)
 let slackApp: any = null;
+
+// No additional tracking needed - rely on Slack's retry headers
 
 /**
  * Initialize the Slack app if not already initialized
@@ -43,11 +50,42 @@ export const handler = async (
   const requestInfo = getRequestInfo(event);
   logger.info("Slack Events API request received", requestInfo);
 
+  // Validate required environment variables
+  const envCheck = validateEnvironment([
+    'SLACK_BOT_TOKEN',
+    'SLACK_SIGNING_SECRET'
+  ]);
+
+  if (!envCheck.valid) {
+    logger.error("Missing required environment variables:", envCheck.missing);
+    return createErrorResponse(
+      new Error(`Missing environment variables: ${envCheck.missing.join(', ')}`),
+      context,
+      500
+    );
+  }
+
+  // No cleanup needed - using only Slack's retry headers for deduplication
+
+  // Get remaining execution time for timeout awareness
+  const remainingTime = context.getRemainingTimeInMillis?.() ?? 30000;
+  logger.info(`Lambda execution time remaining: ${remainingTime}ms`);
+
+  // Create timeout-aware fetch
+  const timeoutAwareFetch = createTimeoutAwareFetch(context);
+
   try {
     // Handle CORS preflight requests
     const corsResponse = handleCorsPrelight(event);
     if (corsResponse) {
       return corsResponse;
+    }
+
+    // Handle Slack retry events first - return immediately to stop retries
+    const retryResponse = handleSlackRetry(event);
+    if (retryResponse) {
+      logger.info("Slack retry event detected, returning 200 to stop retries");
+      return retryResponse;
     }
 
     // Validate request method - handle both AWS and serverless-offline formats
@@ -100,9 +138,14 @@ export const handler = async (
     try {
       if (body.type === "event_callback" && body.event) {
         const slackEvent = body.event;
+
         logger.info(`Processing Slack event: ${slackEvent.type}`, {
           user: slackEvent.user,
-          channel: slackEvent.channel
+          channel: slackEvent.channel,
+          slackEventId: body.event_id,
+          clientMsgId: slackEvent.client_msg_id,
+          ts: slackEvent.ts,
+          teamId: body.team_id
         });
 
         // Create event context for handlers
@@ -110,10 +153,17 @@ export const handler = async (
           event: slackEvent,
           body: body,
           say: async (options: any) => {
-            // Use fetch to make direct Slack API calls
+
+            // Check if we're approaching timeout
+            if (isApproachingTimeout(context)) {
+              logger.warn("Approaching Lambda timeout, skipping response");
+              return;
+            }
+
+            // Use timeout-aware fetch to make direct Slack API calls
             const messageOptions = typeof options === 'string' ? { text: options } : options;
 
-            const response = await fetch('https://slack.com/api/chat.postMessage', {
+            const response = await timeoutAwareFetch('https://slack.com/api/chat.postMessage', {
               method: 'POST',
               headers: {
                 'Authorization': `Bearer ${process.env.SLACK_BOT_TOKEN}`,
@@ -133,7 +183,11 @@ export const handler = async (
           client: {
             chat: {
               postMessage: async (options: any) => {
-                const response = await fetch('https://slack.com/api/chat.postMessage', {
+                if (isApproachingTimeout(context)) {
+                  throw new Error("Approaching Lambda timeout, aborting Slack API call");
+                }
+
+                const response = await timeoutAwareFetch('https://slack.com/api/chat.postMessage', {
                   method: 'POST',
                   headers: {
                     'Authorization': `Bearer ${process.env.SLACK_BOT_TOKEN}`,
@@ -148,7 +202,11 @@ export const handler = async (
                 return await response.json();
               },
               update: async (options: any) => {
-                const response = await fetch('https://slack.com/api/chat.update', {
+                if (isApproachingTimeout(context)) {
+                  throw new Error("Approaching Lambda timeout, aborting Slack API call");
+                }
+
+                const response = await timeoutAwareFetch('https://slack.com/api/chat.update', {
                   method: 'POST',
                   headers: {
                     'Authorization': `Bearer ${process.env.SLACK_BOT_TOKEN}`,
@@ -171,16 +229,25 @@ export const handler = async (
         if (slackEvent.type === "app_mention") {
           // Import and call mention handler directly
           const { registerMentionHandlers } = await import("../handlers/mentionHandler");
+
+          // Store the handler so we can await it
+          let mentionHandler: any = null;
           const tempApp = {
             event: (eventType: string, handler: any) => {
               if (eventType === "app_mention") {
-                handler(eventContext);
+                mentionHandler = handler;
               }
             },
             // Add the client property needed by streamingHelper
             client: eventContext.client
           };
+
           registerMentionHandlers(tempApp as any);
+
+          // Execute the handler and await its completion (deduplication prevents duplicates)
+          if (mentionHandler) {
+            await mentionHandler(eventContext);
+          }
         } else if (slackEvent.type === "message" && slackEvent.text) {
           // Import and call message handler directly
           const { registerMessageHandlers } = await import("../handlers/messageHandler");
@@ -223,11 +290,21 @@ export const handler = async (
 
       return createResponse(200, { ok: true });
     } catch (eventError) {
-      logger.error("Error processing Slack event:", eventError);
+      logger.error("Error processing Slack event:", {
+        error: eventError instanceof Error ? eventError.message : String(eventError),
+        stack: eventError instanceof Error ? eventError.stack : undefined,
+        requestId: context.awsRequestId,
+        remainingTime: context.getRemainingTimeInMillis?.() ?? 0
+      });
       return createResponse(200, { ok: true }); // Always return 200 for Slack
     }
   } catch (error) {
-    logger.error("Unexpected error in Events API handler:", error);
+    logger.error("Unexpected error in Events API handler:", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+      requestId: context.awsRequestId,
+      remainingTime: context.getRemainingTimeInMillis?.() ?? 0
+    });
 
     // Return 500 for unexpected errors
     return createResponse(500, {

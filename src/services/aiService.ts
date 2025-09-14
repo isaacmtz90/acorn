@@ -69,37 +69,11 @@ class AIService {
     if (this.initialized) return;
 
     try {
-      // Use Lambda execution role credentials by default
-      // This automatically uses the IAM role attached to the Lambda function
-      // Only fall back to explicit credentials if running locally with env vars
-      const credentials = process.env.AWS_LAMBDA_FUNCTION_NAME
-        ? undefined // Let AWS SDK use the Lambda execution role automatically
-        : process.env.AWS_ACCESS_KEY_ID
+      const credentials = process.env.AWS_ACCESS_KEY_ID
         ? fromEnv()
         : fromIni({ profile: process.env.AWS_PROFILE || "default" });
 
-      // For local development, we need to ensure AWS_REGION is set for the AI SDK
-      if (!process.env.AWS_REGION) {
-        process.env.AWS_REGION = this.region;
-      }
-
-      // For local development, if no AWS credentials are available,
-      // set up minimal environment variables for the AI SDK
-      if (
-        !process.env.AWS_LAMBDA_FUNCTION_NAME &&
-        !process.env.AWS_ACCESS_KEY_ID &&
-        !process.env.AWS_PROFILE
-      ) {
-        logger.warn(
-          "No AWS credentials found for local development. AI service may not work properly."
-        );
-        logger.warn(
-          "Please set AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY or configure AWS_PROFILE"
-        );
-      }
-
-      // Initialize AI SDK model - it will use Lambda role automatically in Lambda environment
-      // or fall back to environment variables/profiles for local development
+      // Initialize AI SDK model (always available)
       this.model = bedrock(this.modelId);
 
       // Initialize Bedrock Agent client (optional)
@@ -114,8 +88,6 @@ class AIService {
       logger.info(
         `AI Service initialized - Model: ${this.modelId}, Agent: ${
           this.agentId ? "Yes" : "No"
-        }, Credentials: ${
-          process.env.AWS_LAMBDA_FUNCTION_NAME ? "Lambda Role" : "Explicit"
         }`
       );
     } catch (error) {
@@ -653,13 +625,7 @@ class AIService {
   }
 
   isConfigured(): boolean {
-    // In Lambda environment, always configured via execution role
-    // Otherwise check for explicit credentials or AWS profile
-    return !!(
-      process.env.AWS_LAMBDA_FUNCTION_NAME ||
-      process.env.AWS_ACCESS_KEY_ID ||
-      process.env.AWS_PROFILE
-    );
+    return !!(process.env.AWS_ACCESS_KEY_ID || process.env.AWS_PROFILE);
   }
 }
 

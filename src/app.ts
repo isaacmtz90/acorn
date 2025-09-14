@@ -5,6 +5,8 @@ import { registerMessageHandlers } from "./handlers/messageHandler";
 import { registerEventHandlers } from "./handlers/eventHandler";
 import { registerMentionHandlers } from "./handlers/mentionHandler";
 
+// Load .env.local for local development, then .env as fallback
+dotenv.config({ path: '.env.local' });
 dotenv.config();
 
 const app = new App({

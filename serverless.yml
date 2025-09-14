@@ -62,6 +62,11 @@ custom:
   dotenv:
     path: .env.${self:provider.stage}.deploy
     fallback: .env.${self:provider.stage}
+    exclude:
+      - AWS_REGION
+      - AWS_ACCESS_KEY_ID
+      - AWS_SECRET_ACCESS_KEY
+      - AWS_PROFILE
 
 functions:
   # Health check endpoint
@@ -82,5 +87,9 @@ functions:
 
 package:
   patterns:
-    - "!src/**"
-    - "dist/**"
+    - "!src/**/*.test.ts"
+    - "!src/**/*.spec.ts"
+    - "!tests/**"
+    - "!dist/**"
+    - "!.build/**"
+    - "!node_modules/.cache/**"

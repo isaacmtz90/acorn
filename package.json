@@ -19,17 +19,15 @@
     "deploy:remove": "serverless remove",
     "deploy:dev": "serverless deploy --stage dev",
     "deploy:prod": "serverless deploy --stage prod",
-    "build:local": "serverless deploy --stage local",
-    "offline": "rimraf build && rimraf .build && serverless offline start --reloadHandler",
+    "offline": "rimraf build && rimraf .build && serverless offline start --stage local --reloadHandler",
     "package": "npm run build && serverless package",
     "logs": "serverless logs -f slackEvents --tail",
     "logs:dev": "serverless logs -f slackEvents --tail --stage dev",
     "ssm:load": "./scripts/load-ssm-parameters.sh",
     "ssm:load:dev": "./scripts/load-ssm-parameters.sh dev",
+    "ssm:load:local": "./scripts/load-ssm-parameters.sh local",
     "ssm:load:prod": "./scripts/load-ssm-parameters.sh prod",
-    "ssm:get": "./scripts/get-ssm-parameters.sh",
-    "ssm:get:dev": "./scripts/get-ssm-parameters.sh dev",
-    "ssm:get:prod": "./scripts/get-ssm-parameters.sh prod"
+    "ssm:get": "./scripts/get-ssm-parameters.sh"
   },
   "dependencies": {
     "@ai-sdk/amazon-bedrock": "^1.0.2",

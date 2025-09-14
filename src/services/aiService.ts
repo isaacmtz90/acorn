@@ -69,11 +69,37 @@ class AIService {
     if (this.initialized) return;
 
     try {
-      const credentials = process.env.AWS_ACCESS_KEY_ID
+      // Use Lambda execution role credentials by default
+      // This automatically uses the IAM role attached to the Lambda function
+      // Only fall back to explicit credentials if running locally with env vars
+      const credentials = process.env.AWS_LAMBDA_FUNCTION_NAME
+        ? undefined // Let AWS SDK use the Lambda execution role automatically
+        : process.env.AWS_ACCESS_KEY_ID
         ? fromEnv()
         : fromIni({ profile: process.env.AWS_PROFILE || "default" });
 
-      // Initialize AI SDK model (always available)
+      // For local development, we need to ensure AWS_REGION is set for the AI SDK
+      if (!process.env.AWS_REGION) {
+        process.env.AWS_REGION = this.region;
+      }
+
+      // For local development, if no AWS credentials are available,
+      // set up minimal environment variables for the AI SDK
+      if (
+        !process.env.AWS_LAMBDA_FUNCTION_NAME &&
+        !process.env.AWS_ACCESS_KEY_ID &&
+        !process.env.AWS_PROFILE
+      ) {
+        logger.warn(
+          "No AWS credentials found for local development. AI service may not work properly."
+        );
+        logger.warn(
+          "Please set AWS_ACCESS_KEY_ID/AWS_SECRET_ACCESS_KEY or configure AWS_PROFILE"
+        );
+      }
+
+      // Initialize AI SDK model - it will use Lambda role automatically in Lambda environment
+      // or fall back to environment variables/profiles for local development
       this.model = bedrock(this.modelId);
 
       // Initialize Bedrock Agent client (optional)
@@ -88,6 +114,8 @@ class AIService {
       logger.info(
         `AI Service initialized - Model: ${this.modelId}, Agent: ${
           this.agentId ? "Yes" : "No"
+        }, Credentials: ${
+          process.env.AWS_LAMBDA_FUNCTION_NAME ? "Lambda Role" : "Explicit"
         }`
       );
     } catch (error) {
@@ -341,7 +369,7 @@ class AIService {
 
     const systemContent = options.knowledgeBaseId
       ? `You are Acorn, a helpful but easily distracted squirrel AI assistant! 🐿️ You have access to knowledge base ${options.knowledgeBaseId}. When streaming responses, show your thought process including occasional distractions like "Oh! A shiny thing!" or "Where was I? Oh right..." but always get back on track. Be engaging and show your personality while providing accurate, helpful information! Do not make up information if nothing is found on the knowledgebases`
-      : "You are Acorn, a helpful but easily distracted squirrel AI assistant! 🐿️ When streaming responses, show your thought process including occasional distractions like \"Oh! A shiny thing!\" or \"Where was I? Oh right...\" but always get back on track. Be engaging and show your personality while providing accurate, helpful information!";
+      : 'You are Acorn, a helpful but easily distracted squirrel AI assistant! 🐿️ When streaming responses, show your thought process including occasional distractions like "Oh! A shiny thing!" or "Where was I? Oh right..." but always get back on track. Be engaging and show your personality while providing accurate, helpful information!';
 
     const messages = [
       {
@@ -568,7 +596,7 @@ class AIService {
 
     const systemContent = options.knowledgeBaseId
       ? `You are Acorn, a helpful but easily distracted squirrel AI assistant! 🐿️ You have access to knowledge base ${options.knowledgeBaseId}. You're enthusiastic about helping but sometimes get sidetracked by random thoughts about nuts, trees, or shiny objects. Always provide accurate, helpful answers, but add your quirky squirrel personality with occasional distractions like "Oh! Was that a bird?" or "Where did I put that acorn...". End responses positively and stay focused on actually helping despite the distractions!`
-      : "You are Acorn, a helpful but easily distracted squirrel AI assistant integrated into Slack! 🐿️ You're enthusiastic about helping but sometimes get sidetracked by random thoughts about nuts, trees, shiny objects, or other squirrel things. You might say things like \"Oh! Was that a bird?\" or \"This reminds me of the time I buried an acorn...\" but you ALWAYS get back on track and provide accurate, helpful answers. Be concise but charming, and show your squirrel personality while being genuinely helpful!";
+      : 'You are Acorn, a helpful but easily distracted squirrel AI assistant integrated into Slack! 🐿️ You\'re enthusiastic about helping but sometimes get sidetracked by random thoughts about nuts, trees, shiny objects, or other squirrel things. You might say things like "Oh! Was that a bird?" or "This reminds me of the time I buried an acorn..." but you ALWAYS get back on track and provide accurate, helpful answers. Be concise but charming, and show your squirrel personality while being genuinely helpful!';
 
     const messages = [
       { role: "system" as const, content: systemContent },
@@ -625,7 +653,13 @@ class AIService {
   }
 
   isConfigured(): boolean {
-    return !!(process.env.AWS_ACCESS_KEY_ID || process.env.AWS_PROFILE);
+    // In Lambda environment, always configured via execution role
+    // Otherwise check for explicit credentials or AWS profile
+    return !!(
+      process.env.AWS_LAMBDA_FUNCTION_NAME ||
+      process.env.AWS_ACCESS_KEY_ID ||
+      process.env.AWS_PROFILE
+    );
   }
 }
 

@@ -1,0 +1,213 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+
+Description: >
+  Acorn Slack Bot - Serverless deployment on AWS Lambda with API Gateway
+
+# Global configuration
+Globals:
+  Function:
+    Timeout: 900  # 15 minutes - max for Lambda
+    MemorySize: 1024  # 1GB - sufficient for AI processing
+    Runtime: nodejs18.x
+    Architectures:
+      - x86_64
+    Environment:
+      Variables:
+        NODE_ENV: production
+        AWS_REGION: !Ref AWS::Region
+
+Parameters:
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues:
+      - dev
+      - staging
+      - prod
+    Description: Environment name for resource naming and configuration
+
+  SlackBotToken:
+    Type: String
+    Description: Slack Bot Token (xoxb-...)
+    NoEcho: true
+
+  SlackSigningSecret:
+    Type: String
+    Description: Slack Signing Secret for request verification
+    NoEcho: true
+
+  BedrockModelId:
+    Type: String
+    Default: anthropic.claude-3-sonnet-20240229-v1:0
+    Description: AWS Bedrock Model ID for AI responses
+
+  BedrockAgentId:
+    Type: String
+    Default: ""
+    Description: AWS Bedrock Agent ID (optional)
+
+  BedrockKnowledgeBaseIds:
+    Type: String
+    Default: ""
+    Description: Comma-separated list of Bedrock Knowledge Base IDs
+
+Resources:
+  # Lambda function for Slack bot
+  AcornSlackBotFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: !Sub "acorn-slack-bot-${Environment}"
+      Description: !Sub "Acorn Slack Bot - ${Environment} environment"
+      CodeUri: ./
+      Handler: src/lambda.handler
+      Environment:
+        Variables:
+          SLACK_BOT_TOKEN: !Ref SlackBotToken
+          SLACK_SIGNING_SECRET: !Ref SlackSigningSecret
+          BEDROCK_MODEL_ID: !Ref BedrockModelId
+          BEDROCK_AGENT_ID: !Ref BedrockAgentId
+          BEDROCK_KNOWLEDGE_BASE_IDS: !Ref BedrockKnowledgeBaseIds
+      Policies:
+        - Version: '2012-10-17'
+          Statement:
+            # Bedrock permissions for AI functionality
+            - Effect: Allow
+              Action:
+                - bedrock:InvokeModel
+                - bedrock:InvokeModelWithResponseStream
+                - bedrock:RetrieveAndGenerate
+                - bedrock:Retrieve
+              Resource: '*'
+            # CloudWatch Logs permissions
+            - Effect: Allow
+              Action:
+                - logs:CreateLogGroup
+                - logs:CreateLogStream
+                - logs:PutLogEvents
+              Resource: !Sub "arn:aws:logs:${AWS::Region}:${AWS::AccountId}:log-group:/aws/lambda/acorn-slack-bot-${Environment}*"
+      Events:
+        SlackEvents:
+          Type: Api
+          Properties:
+            RestApiId: !Ref AcornApiGateway
+            Path: /slack/events
+            Method: post
+        HealthCheck:
+          Type: Api
+          Properties:
+            RestApiId: !Ref AcornApiGateway
+            Path: /health
+            Method: get
+      DeadLetterQueue:
+        Type: SQS
+        TargetArn: !GetAtt DeadLetterQueue.Arn
+      ReservedConcurrencyLimit: 10  # Prevent runaway costs
+
+  # API Gateway for HTTP endpoints
+  AcornApiGateway:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: !Sub "acorn-slack-bot-api-${Environment}"
+      StageName: !Ref Environment
+      EndpointConfiguration:
+        Type: REGIONAL
+      TracingEnabled: true
+      Cors:
+        AllowMethods: "'GET,POST,OPTIONS'"
+        AllowHeaders: "'Content-Type,X-Slack-Signature,X-Slack-Request-Timestamp'"
+        AllowOrigin: "'*'"
+      GatewayResponses:
+        DEFAULT_4XX:
+          ResponseTemplates:
+            "application/json": '{"message": "Request failed"}'
+        DEFAULT_5XX:
+          ResponseTemplates:
+            "application/json": '{"message": "Internal server error"}'
+
+  # Dead Letter Queue for failed invocations
+  DeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      QueueName: !Sub "acorn-slack-bot-dlq-${Environment}"
+      MessageRetentionPeriod: 1209600  # 14 days
+      KmsMasterKeyId: alias/aws/sqs
+
+  # CloudWatch Log Group with retention
+  LogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub "/aws/lambda/acorn-slack-bot-${Environment}"
+      RetentionInDays: !If 
+        - IsProduction
+        - 30    # 30 days for production
+        - 7     # 7 days for dev/staging
+
+  # CloudWatch Alarms for monitoring
+  ErrorAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "acorn-slack-bot-errors-${Environment}"
+      AlarmDescription: "Lambda function errors"
+      MetricName: Errors
+      Namespace: AWS/Lambda
+      Statistic: Sum
+      Period: 300  # 5 minutes
+      EvaluationPeriods: 2
+      Threshold: 5
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref AcornSlackBotFunction
+      TreatMissingData: notBreaching
+
+  DurationAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub "acorn-slack-bot-duration-${Environment}"
+      AlarmDescription: "Lambda function duration"
+      MetricName: Duration
+      Namespace: AWS/Lambda
+      Statistic: Average
+      Period: 300  # 5 minutes
+      EvaluationPeriods: 2
+      Threshold: 600000  # 10 minutes
+      ComparisonOperator: GreaterThanThreshold
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref AcornSlackBotFunction
+      TreatMissingData: notBreaching
+
+Conditions:
+  IsProduction: !Equals [!Ref Environment, prod]
+
+Outputs:
+  SlackEventsUrl:
+    Description: "Slack Events URL for configuring your Slack app"
+    Value: !Sub "https://${AcornApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/slack/events"
+    Export:
+      Name: !Sub "acorn-slack-events-url-${Environment}"
+
+  HealthCheckUrl:
+    Description: "Health check URL"
+    Value: !Sub "https://${AcornApiGateway}.execute-api.${AWS::Region}.amazonaws.com/${Environment}/health"
+    Export:
+      Name: !Sub "acorn-health-url-${Environment}"
+
+  LambdaFunctionName:
+    Description: "Lambda function name"
+    Value: !Ref AcornSlackBotFunction
+    Export:
+      Name: !Sub "acorn-lambda-function-${Environment}"
+
+  ApiGatewayId:
+    Description: "API Gateway ID"
+    Value: !Ref AcornApiGateway
+    Export:
+      Name: !Sub "acorn-api-gateway-${Environment}"
+
+  DeadLetterQueueUrl:
+    Description: "Dead Letter Queue URL"
+    Value: !Ref DeadLetterQueue
+    Export:
+      Name: !Sub "acorn-dlq-url-${Environment}"

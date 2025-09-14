@@ -1,0 +1,73 @@
+# SAM configuration file for different environments
+
+[default]
+[default.global]
+[default.global.parameters]
+stack_name = "acorn-slack-bot-dev"
+s3_bucket = "" # Will be auto-created by SAM
+s3_prefix = "acorn-slack-bot"
+region = "us-east-1"
+confirm_changeset = true
+capabilities = "CAPABILITY_IAM"
+parameter_overrides = [
+  "Environment=dev"
+]
+image_repositories = []
+
+[default.build]
+[default.build.parameters]
+cached = true
+parallel = true
+
+[default.deploy]
+[default.deploy.parameters]
+capabilities = "CAPABILITY_IAM"
+confirm_changeset = true
+fail_on_empty_changeset = false
+parameter_overrides = [
+  "Environment=dev"
+]
+
+[staging]
+[staging.global]
+[staging.global.parameters]
+stack_name = "acorn-slack-bot-staging"
+s3_bucket = "" # Will be auto-created by SAM
+s3_prefix = "acorn-slack-bot"
+region = "us-east-1"
+confirm_changeset = true
+capabilities = "CAPABILITY_IAM"
+parameter_overrides = [
+  "Environment=staging"
+]
+
+[staging.deploy]
+[staging.deploy.parameters]
+capabilities = "CAPABILITY_IAM"
+confirm_changeset = true
+fail_on_empty_changeset = false
+parameter_overrides = [
+  "Environment=staging"
+]
+
+[prod]
+[prod.global]
+[prod.global.parameters]
+stack_name = "acorn-slack-bot-prod"
+s3_bucket = "" # Will be auto-created by SAM
+s3_prefix = "acorn-slack-bot"
+region = "us-east-1"
+confirm_changeset = false  # Require manual approval for prod
+capabilities = "CAPABILITY_IAM"
+parameter_overrides = [
+  "Environment=prod"
+]
+
+[prod.deploy]
+[prod.deploy.parameters]
+capabilities = "CAPABILITY_IAM"
+confirm_changeset = false  # Require manual approval for prod
+fail_on_empty_changeset = false
+parameter_overrides = [
+  "Environment=prod"
+]

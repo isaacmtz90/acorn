@@ -1,42 +1,112 @@
-const { App } = require("@slack/bolt");
-require("dotenv").config();
+// HTTP Mode Slack App for Lambda
+// This replaces the Socket Mode version for serverless deployment
 
-const messageHandler = require("./handlers/messageHandler");
-const eventHandler = require("./handlers/eventHandler");
-const aiHandler = require("./handlers/aiHandler");
-const mentionHandler = require("./handlers/mentionHandler");
+require('dotenv').config();
 
-const app = new App({
-  token: process.env.SLACK_BOT_TOKEN,
-  signingSecret: process.env.SLACK_SIGNING_SECRET,
-  socketMode: true,
-  appToken: process.env.SLACK_APP_TOKEN,
-  port: process.env.PORT || 3000,
-});
+const { logger } = require('./utils/logger');
+const aiService = require('./services/aiService');
 
-messageHandler(app);
-eventHandler(app);
-aiHandler(app);
-mentionHandler(app);
+// For local testing with Express (Lambda uses different entry point)
+if (require.main === module) {
+  startLocalServer();
+}
 
-// Debug: Log all events (remove this after debugging)
-app.event(/.+/, async ({ event }) => {
-  console.log("📨 EVENT RECEIVED:", event.type, {
-    user: event.user,
-    channel: event.channel,
-    text: event.text?.substring(0, 50),
+/**
+ * Local development server using Express
+ * For production, use src/lambda.js as the Lambda handler
+ */
+async function startLocalServer() {
+  const express = require('express');
+  const { createEventHandler } = require('./slack/eventHandler');
+  const { verifySlackSignature } = require('./slack/verify');
+  
+  const app = express();
+  const port = process.env.PORT || 3000;
+
+  // Middleware
+  app.use('/slack/events', express.raw({ type: 'application/json' }));
+  app.use(express.json());
+
+  // Health check endpoint
+  app.get('/health', (req, res) => {
+    const aiStatus = aiService.getStatus();
+    res.json({
+      status: 'healthy',
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime(),
+      memory: process.memoryUsage(),
+      version: process.version,
+      ai: aiStatus
+    });
   });
-});
 
-app.error(async (error) => {
-  console.error("Bot error:", error);
-});
+  // Slack events endpoint
+  app.post('/slack/events', async (req, res) => {
+    try {
+      const body = req.body.toString();
+      const parsedBody = JSON.parse(body);
+      
+      // Get Slack headers
+      const timestamp = req.headers['x-slack-request-timestamp'];
+      const signature = req.headers['x-slack-signature'];
+      
+      logger.info('Slack event received:', {
+        type: parsedBody.type,
+        eventType: parsedBody.event?.type,
+        timestamp: timestamp,
+        hasSignature: !!signature
+      });
 
-(async () => {
-  try {
-    await app.start();
-    console.log("⚡️ Acorn Slack bot is running!");
-  } catch (error) {
-    console.error("Failed to start bot:", error);
-  }
-})();
+      // Handle URL verification challenge
+      if (parsedBody.type === 'url_verification') {
+        logger.info('URL verification challenge received');
+        return res.status(200).send(parsedBody.challenge);
+      }
+
+      // Verify Slack signature for security
+      if (!verifySlackSignature(body, signature, timestamp)) {
+        logger.error('Invalid Slack signature');
+        return res.status(401).json({ error: 'Invalid signature' });
+      }
+
+      // Handle Slack events
+      const result = await createEventHandler(parsedBody, {
+        requestId: req.headers['x-request-id'] || 'local-' + Date.now(),
+        headers: req.headers
+      });
+
+      logger.info('Event processed successfully');
+      res.status(200).json(result || { ok: true });
+
+    } catch (error) {
+      logger.error('Error processing Slack event:', error);
+      res.status(500).json({ 
+        error: 'Internal server error',
+        message: error.message 
+      });
+    }
+  });
+
+  // Start server
+  app.listen(port, () => {
+    console.log(`🏥 HTTP Mode Acorn Slack bot running on port ${port}`);
+    console.log(`📡 Slack events endpoint: http://localhost:${port}/slack/events`);
+    console.log(`🩺 Health check: http://localhost:${port}/health`);
+    console.log(`🔧 For production deployment, use src/lambda.js`);
+  });
+
+  // Graceful shutdown
+  process.on('SIGTERM', () => {
+    console.log('📊 Received SIGTERM, shutting down gracefully...');
+    process.exit(0);
+  });
+
+  process.on('SIGINT', () => {
+    console.log('📊 Received SIGINT, shutting down gracefully...');
+    process.exit(0);
+  });
+}
+
+module.exports = {
+  startLocalServer
+};

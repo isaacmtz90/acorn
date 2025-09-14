@@ -4,89 +4,101 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-Acorn is a streamlined Slack chatbot application built with Node.js using the Slack Bolt framework. The bot provides intelligent AI capabilities through a unified service that automatically chooses between Bedrock Agents (when configured) and direct model access via Vercel's AI SDK.
+Acorn is a streamlined Slack chatbot application built with Node.js for AWS Lambda deployment. The bot provides intelligent AI capabilities through AWS Bedrock services with automatic agent/model selection and streaming responses through knowledge base integration.
 
 ## Development Commands
 
 - `npm install` - Install dependencies
-- `npm run dev` - Start the bot in development mode with auto-reload
-- `npm start` - Start the bot in production mode
+- `npm run dev` - Start the bot in local development mode
+- `npm start` - Start the bot for local testing
 - `npm test` - Run tests
 - `npm run lint` - Run ESLint
 - `npm run lint:fix` - Fix ESLint issues automatically
+- `npm run build` - Build for Lambda deployment
+- `npm run deploy` - Deploy to AWS Lambda (dev environment)
+- `npm run deploy:prod` - Deploy to production
 
 ## Architecture
 
-The application follows a modular handler-based architecture:
+The application uses HTTP Mode with Express for local development and AWS Lambda for production deployment:
 
 ### Core Structure
-- `src/app.js` - Main application entry point, initializes Slack App and registers handlers
-- `src/handlers/` - Event, message, and AI interaction handlers
-  - `messageHandler.js` - Handles basic direct messages, greetings, and help
-  - `eventHandler.js` - Handles Slack events like member joins and reactions
-  - `aiHandler.js` - Text pattern handlers for AI interactions (ask:, stream:, kb queries)
-  - `mentionHandler.js` - Enhanced mention handler with comprehensive pattern matching, status/info commands, and smart responses
+- `src/app.js` - HTTP Mode entry point with Express server for local development
+- `src/lambda.js` - AWS Lambda handler for production deployment
+- `src/slack/` - HTTP Mode event handlers
+  - `eventHandler.js` - Processes all Slack events (mentions, messages, reactions)
+  - `responses.js` - Async response utilities using Slack Web API
+  - `verify.js` - Slack signature verification for security
 - `src/services/` - External service integration
-  - `aiService.js` - Unified AI service with automatic agent/model selection and comprehensive logging
+  - `aiService.js` - Unified AI service with automatic agent/model selection
 - `src/utils/` - Utility modules
   - `logger.js` - Simple logging utility with timestamps
+  - `responses.js` - Personality text and response templates
 
 ### Configuration
-- Uses Socket Mode for real-time communication with Slack
+- Uses HTTP Events Mode for serverless deployment
 - Environment variables configured in `.env` (see `.env.example`)
-- Required Slack tokens: `SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET`, `SLACK_APP_TOKEN`
+- Required Slack tokens: `SLACK_BOT_TOKEN`, `SLACK_SIGNING_SECRET`
 - Required AWS credentials: `AWS_ACCESS_KEY_ID`/`AWS_SECRET_ACCESS_KEY` or `AWS_PROFILE`
 - AI configuration: `BEDROCK_MODEL_ID` (defaults to Claude 3 Sonnet)
 - Optional Bedrock Agent: `BEDROCK_AGENT_ID`, `BEDROCK_KNOWLEDGE_BASE_IDS`
 
-### Handler Pattern
-Each handler module exports a function that takes the Slack App instance and registers event listeners. This modular approach makes it easy to add new functionality by creating new handlers or extending existing ones.
+### Event Processing Architecture
+The bot processes Slack events through HTTP requests with signature verification:
 
-### AI Integration Architecture
-The bot uses a unified AI service with automatic selection:
+**HTTP Event Flow:**
+1. Slack sends HTTP POST to `/slack/events`
+2. Request signature verification for security
+3. Event routing to appropriate handlers
+4. AI processing with streaming responses
+5. Async message updates via Slack Web API
 
 **Unified AI Service (`aiService.js`):**
 - Single service handles both agent and direct model access
 - Automatically uses Bedrock Agent when configured, falls back to direct model
 - Built-in error handling and graceful fallbacks
-- Supports both standard and streaming responses
+- Supports streaming responses with async message updates
 - Manages AWS credentials and configuration centrally
 - Session generation for agent-based interactions
 
-## Q&A Usage Patterns
+## Usage Patterns
 
-Users can interact with the AI using several methods:
+Users interact with the AI through:
 
-**Standard Queries:**
-- `ask: What is the company policy?` - General questions
-- `ask kb1: Security guidelines?` - Query specific knowledge base by number
-- `@bot How do I submit expenses?` - Direct mention with question
-- `/acorn-ask What are the office hours?` - Slash command
-
-**Enhanced Mentions:**
+**Direct Mentions:**
+- `@bot How do I submit expenses?` - AI queries with streaming responses
 - `@bot hello` - Smart greetings with variety
 - `@bot help` - Display usage help and commands
 - `@bot status` - Check bot health and configuration
-- `@bot stream explain quantum physics` - Direct streaming via mention
 - `@bot thanks` - Friendly acknowledgment responses
 
-**Streaming Responses:**
-- `stream: Explain machine learning` - Streaming text responses
-- `@acorn stream: Tell me about quantum computing` - Streaming via mention
+**Text Patterns (deprecated - all go through mentions now):**
+- `ask: question` - General questions (still supported)
+- `ask kb1: question` - Specific knowledge base queries
 
 **Information Commands:**
-- `@acorn info` or `info` - Display AI configuration and usage help
-- `@acorn status` or `status` - Show bot and AI service status
+- `@bot info` - Display AI configuration and usage help
+- `@bot status` - Show bot and AI service status
 
 ## Adding New Features
 
 When adding new bot functionality:
-1. Create handlers in the appropriate handler file or create a new one
-2. Register the handler in `src/app.js`
+1. Modify `src/slack/eventHandler.js` for event processing
+2. Add response utilities to `src/slack/responses.js` 
 3. Use the logger utility for consistent logging
 4. Handle errors gracefully with try/catch blocks
 5. For AI features:
-   - Use the unified `aiService.query()` method for all AI interactions
-   - Use `aiService.stream()` for streaming responses
-   - The service automatically chooses the best approach (agent vs direct model)
+   - Use the unified `aiService.stream()` method for all AI interactions
+   - All responses are streamed by default through knowledge base
    - Built-in error handling and fallbacks
+6. Test locally with `npm run dev`
+7. Deploy with `npm run deploy`
+
+## Deployment
+
+The bot deploys to AWS Lambda using SAM (Serverless Application Model):
+- **Local testing**: `npm run dev` (Express server)
+- **Lambda deployment**: `npm run deploy` (SAM deploy)
+- **Production**: `npm run deploy:prod`
+
+See `LAMBDA_DEPLOYMENT.md` for detailed deployment instructions.

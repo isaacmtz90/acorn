@@ -1,14 +1,22 @@
 {
   "name": "acorn-slack-bot",
   "version": "1.0.0",
-  "description": "A Slack chatbot application",
+  "description": "A Slack chatbot application - HTTP Mode for AWS Lambda",
   "main": "src/app.js",
   "scripts": {
     "start": "node src/app.js",
     "dev": "nodemon src/app.js",
     "test": "jest",
     "lint": "eslint src/",
-    "lint:fix": "eslint src/ --fix"
+    "lint:fix": "eslint src/ --fix",
+    "build": "sam build",
+    "deploy": "./scripts/deploy.sh dev",
+    "deploy:staging": "./scripts/deploy.sh staging",
+    "deploy:prod": "./scripts/deploy.sh prod",
+    "deploy:guided": "./scripts/deploy.sh dev --guided",
+    "validate": "sam validate",
+    "local": "sam local start-api",
+    "logs": "sam logs --tail --stack-name acorn-slack-bot-dev"
   },
   "dependencies": {
     "@slack/bolt": "^3.17.1",
@@ -16,7 +24,8 @@
     "@aws-sdk/client-bedrock-agent-runtime": "^3.658.1",
     "@aws-sdk/credential-providers": "^3.658.1",
     "ai": "^3.4.32",
-    "@ai-sdk/amazon-bedrock": "^1.0.2"
+    "@ai-sdk/amazon-bedrock": "^1.0.2",
+    "express": "^4.18.2"
   },
   "devDependencies": {
     "eslint": "^8.57.0",
